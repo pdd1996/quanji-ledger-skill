@@ -1,0 +1,30 @@
+# ===== 本地账本与工作目录（含真实商户、金额，绝不入库）=====
+work/
+_bill_work/
+*.ledger.csv
+ledger*.csv
+*.xlsx
+*.zip
+*.eml
+*.csv
+
+# 单文件 App 产物：内联了完整账本，属于新的分发风险点
+*App.html
+*记账App.html
+
+# 明文凭据与本地补充知识库（REDACTION.md 第 31 行：机构名写这里，不要写回代码）
+.qqmail.json
+merchant_kb.local.json
+
+# ===== Python 运行产物（.pyc 会让「源码已脱敏」失效）=====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ===== 编辑器 / 系统 =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -34,17 +34,34 @@ def load(path=LEDGER):
         for r in csv.DictReader(f):
             r["金额"] = float(r["金额"])
             r["_dt"] = datetime.strptime(r["时间"][:19], "%Y-%m-%d %H:%M:%S")
+            # 口径桶（老账本没有这一列时退回按「收支」推断，行为与以前一致）
+            r["口径桶"] = r.get("口径桶") or (
+                "计入" if r["收支"] in ("expense", "income") else "不计收支")
             rows.append(r)
     return rows
 
+
+def _in_ledger(r) -> bool:
+    """是否计入收支（主账本）。
+
+    必须看「口径桶」，不能只看「收支」：银行流水（工行）的资金调拨本身就带正负号 ——
+    理财买入是 -10.00、他行汇入是 +500.00，只看符号会把内部划转算成消费。
+    """
+    return r["口径桶"] == "计入"
+
+
+def _expense(rows):
+    return [r for r in rows if r["收支"] == "expense" and _in_ledger(r)]
+
 # ---------------------------------------------------------------- 1. 双视角
 def dual_perspective(rows):
-    exp = [r for r in rows if r["收支"] == "expense"]
+    exp = _expense(rows)
     total = sum(r["金额"] for r in exp)
     credit = [r for r in exp if r["支付性质"] == "credit"]
     cred_sum = sum(r["金额"] for r in credit)
     balance = [r for r in exp if r["支付性质"] == "balance"]
-    repay = [r for r in rows if "还款" in r["类目"] and r["收支"] == "neutral"]
+    # 还款在资金流水区（桶 = 不计收支），不在主账本里
+    repay = [r for r in rows if "还款" in r["类目"] and not _in_ledger(r)]
     repay_sum = sum(r["金额"] for r in repay)
     later = sorted(repay, key=lambda r: r["_dt"])[-1] if repay else None
     return dict(total=total, credit=cred_sum, credit_n=len(credit),
@@ -53,9 +70,10 @@ def dual_perspective(rows):
                 repay_sum=repay_sum, repay_n=len(repay),
                 net_debt=cred_sum - repay_sum, last_repay=later)
 
+
 # ---------------------------------------------------------------- 2. 订阅
 def detect_subscriptions(rows):
-    exp = [r for r in rows if r["收支"] == "expense"]
+    exp = _expense(rows)
     groups = defaultdict(list)
     for r in exp:
         key = r["类目"]
@@ -94,7 +112,7 @@ def detect_subscriptions(rows):
 
 # ---------------------------------------------------------------- 3. 定投
 def detect_invest_plans(rows):
-    neu = [r for r in rows if r["收支"] == "neutral"]
+    neu = [r for r in rows if not _in_ledger(r)]
     g = defaultdict(list)
     for r in neu:
         g[(r["商户"], r["商品说明"])].append(r)
@@ -114,7 +132,7 @@ def detect_invest_plans(rows):
 
 # ---------------------------------------------------------------- 4. 异常
 def detect_anomalies(rows, months=(None, None)):
-    exp = [r for r in rows if r["收支"] == "expense"]
+    exp = _expense(rows)
     out = []
     bycat = defaultdict(list)
     for r in exp:
@@ -205,15 +223,34 @@ def coverage(rows):
     return dict(first=d0, last=d1, days=len(days), missing=len(miss))
 
 
+def cat_totals(rows):
+    """按类目汇总金额（不是笔数）。
+
+    不能直接用 Counter(类目)：那会按**笔数**排序，交通 27 笔会排在餐饮 17 笔前面，
+    但金额完全不是这个次序 —— 展示"消费构成"必须按金额。
+    """
+    tot = defaultdict(float)
+    n = defaultdict(int)
+    for r in rows:
+        tot[r["类目"]] += r["金额"]
+        n[r["类目"]] += 1
+    return sorted(((c, round(v, 2), n[c]) for c, v in tot.items()),
+                  key=lambda x: -x[1])
+
+
 def build(rows):
+    exp = _expense(rows)
     return dict(
         overview=dict(
             n=len(rows),
-            expense=sum(r["金额"] for r in rows if r["收支"] == "expense"),
-            income=sum(r["金额"] for r in rows if r["收支"] == "income"),
+            n_ledger=sum(1 for r in rows if _in_ledger(r)),
+            n_neutral=sum(1 for r in rows if not _in_ledger(r)),
+            expense=sum(r["金额"] for r in exp),
+            income=sum(r["金额"] for r in rows
+                       if r["收支"] == "income" and _in_ledger(r)),
             review=sum(1 for r in rows if r["需确认"] == "Y"),
             platforms=dict(Counter(r["平台"] for r in rows)),
-            categories=Counter(r["类目"] for r in rows if r["收支"] == "expense").most_common(),
+            categories=cat_totals(exp),
         ),
         dual=dual_perspective(rows),
         subs=detect_subscriptions(rows),
@@ -235,10 +272,14 @@ if __name__ == "__main__":
     o, d = R["overview"], R["dual"]
     print("=" * 76)
     print("■ 概览")
-    print(f"  账本条数 {o['n']}  平台 {o['platforms']}")
+    print(f"  账本条数 {o['n']}（计入收支 {o.get('n_ledger', o['n'])} · 不计收支 {o.get('n_neutral', 0)}）"
+          f"  平台 {o['platforms']}")
     print(f"  消费(权责) ¥{o['expense']:.2f}   收入 ¥{o['income']:.2f}   待确认分类 {o['review']} 笔")
     print(f"  覆盖 {R['coverage']['first']} ~ {R['coverage']['last']}，共 {R['coverage']['days']} 天有记录，"
           f"无记录 {R['coverage']['missing']} 天")
+    if o.get("categories"):
+        top = "、".join(f"{c} ¥{v:.2f}({n}笔)" for c, v, n in o["categories"][:6])
+        print(f"  消费构成      {top}")
     print()
     print("■ ① 双视角对账（权责 vs 现金流）")
     print(f"  消费发生额      ¥{d['total']:.2f}")

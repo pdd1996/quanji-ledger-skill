@@ -24,6 +24,7 @@ ASSETS = os.path.join(SKILL_ROOT, "assets", "app_src")
 
 CLS = {"转账·人际": "transfer", "资金调拨": "transfer", "投资": "invest", "投资·收益": "invest",
        "信用·还款": "debt", "退款": "refund"}
+PLATFORM_LABEL = {"wechat": "微信", "alipay": "支付宝", "icbc": "工行"}
 ICON = {
     "餐饮": "🍜", "餐饮·快餐": "🍔", "餐饮·咖啡": "☕", "餐饮·茶饮": "🧋", "餐饮·零食": "🍿",
     "交通": "🚕", "交通·网约车": "🚕", "交通·公交": "🚌", "交通·停车": "🅿️",
@@ -40,10 +41,18 @@ ICON = {
 def make_data(rows, R):
     tx, review = [], []
     for i, r in enumerate(rows):
+        # 方向按「口径桶」定，不只看符号：
+        # 银行流水（工行）的资金调拨本身带正负号（理财买入 -10.00、他行汇入 +500.00），
+        # 只看符号会把内部划转当成支出/收入，把「花了多少」算错一个量级。
+        bucket = r.get("口径桶") or ""
+        if bucket == "不计收支" or (not bucket and r["收支"] not in ("expense", "income")):
+            direction = "n"
+        else:
+            direction = {"expense": "e", "income": "i"}.get(r["收支"], "n")
         tx.append([r["时间"][:7], r["时间"][:16], r["类目"], CLS.get(r["类目"], "consume"),
-                   round(r["金额"], 2), {"expense": "e", "income": "i"}.get(r["收支"], "n"),
+                   round(r["金额"], 2), direction,
                    r["商户"][:18], r["商品说明"][:26], r["支付性质"],
-                   "微信" if r["平台"] == "wechat" else "支付宝", r["状态"][:12]])
+                   PLATFORM_LABEL.get(r["平台"], r["平台"]), r["状态"][:12]])
         if r["需确认"] == "Y":
             review.append(i)
     months = sorted({t[0] for t in tx})

@@ -16,6 +16,11 @@ ledger*.csv
 .qqmail.json
 merchant_kb.local.json
 
+# ===== 本地临时分析产物（可能含真实商户/卡号/金额，绝不入库）=====
+.tmp_*
+tmp_*
+*.local.json
+
 # ===== Python 运行产物（.pyc 会让「源码已脱敏」失效）=====
 __pycache__/
 *.py[cod]
